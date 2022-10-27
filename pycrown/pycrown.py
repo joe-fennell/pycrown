@@ -21,12 +21,12 @@ import scipy.ndimage as ndimage
 import scipy.ndimage.filters as filters
 from scipy.spatial.distance import cdist
 
-from skimage.morphology import watershed
+from skimage.segmentation import watershed
 from skimage.filters import threshold_otsu
 # from skimage.feature import peak_local_max
 
-import gdal
-import osr
+from osgeo import gdal
+from osgeo import osr
 
 from shapely.geometry import mapping, Point, Polygon
 
