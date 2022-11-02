@@ -9,7 +9,7 @@ from numba import jit, float32, int32, float_
 import numpy as np
 
 
-@jit(nopython=True, nogil=True, parallel=False)
+@jit(nopython=True, nogil=False, parallel=False)
 def get_neighbourhood(radius):
     """ creates list of row and column coordinates for circular indexing around
     a central pixel and for different distances from the centre
@@ -62,7 +62,7 @@ def get_neighbourhood(radius):
 
 
 @jit(int32[:, :](float32[:, :], int32[:, :], float_, float_, float_, float_),
-     nopython=True, nogil=True, parallel=False)
+     nopython=True, nogil=False, parallel=False)
 def _crown_dalponteCIRC(Chm, Trees, th_seed, th_crown, th_tree, max_crown):
     '''
     Crown delineation based on Dalponte and Coomes (2016) and

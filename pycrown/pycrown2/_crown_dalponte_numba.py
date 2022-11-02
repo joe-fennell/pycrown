@@ -10,7 +10,7 @@ import numpy as np
 
 
 @jit(int32[:, :](float32[:, :], int32[:, :], float_, float_, float_, float_),
-     nopython=True, nogil=True, parallel=False)
+     nopython=True, nogil=False, parallel=False)
 
 def _crown_dalponte(Chm, Trees, th_seed, th_crown, th_tree, max_crown):
     '''

@@ -1,18 +1,52 @@
 import numpy as np
+import logging
+import xarray
+from skimage.morphology import binary_closing
+
 
 class CanopySegmentor:
     """Canopy delineation estimator
     """
 
-    def __init__(self, algorithm='dalponteCIRC_numba', th_tree=15.,
-                 th_seed=0.7, th_crown=0.55, max_crown=10.):
+    def __init__(self, algorithm='dalponteCIRC', th_tree=15.,
+                 th_seed=0.7, th_crown=0.55, max_crown=10., resolution=1,
+                 post_process=True, fill_limit=2):
         """
+        Args:
+            algorithm (str): one of ['dalponteCIRC', 'dalponte',
+                'dalponte_cython']
+            th_tree (float): minimum height of tree seed in m
+            th_crown (float): factor two for minimum height of tree crown
+            th_seed (float): factor one for minimum height of tree crown
+            max_crown (float): max crown radius in m
+            post_process (bool): if True applies a morphological closing and
+                interpolation
+            fill_limit (float): approx distance in metres to fill from tree
         """
+        self.resolution = resolution
         self.algorithm = algorithm
-        self.th_seed = th_seed
-        self.th_tree = th_tree
-        self.th_crown = th_crown
+        self.th_seed = np.float(th_seed)
+        self.th_tree = np.float(th_tree)
+        self.th_crown = np.float(th_crown)
         self.max_crown = max_crown
+        self._post_process = post_process
+        self.fill_limit = fill_limit
+
+    @property
+    def fill_limit(self):
+        return float(self._fill_limit) * self.resolution
+
+    @fill_limit.setter
+    def fill_limit(self, x):
+        self._fill_limit = int(np.ceil(x / self.resolution))
+
+    @property
+    def max_crown(self):
+        return float(self._max_crown) * self.resolution
+
+    @max_crown.setter
+    def max_crown(self, x):
+        self._max_crown = np.float(x / self.resolution)
 
     @property
     def algorithm(self):
@@ -20,110 +54,77 @@ class CanopySegmentor:
 
     @algorithm.setter
     def algorithm(self, name):
-        if name == 'dalponte_numba':
+        if name == 'dalponte':
             from ._crown_dalponte_numba import _crown_dalponte
             self._algorithm_name = name
             self._algorithm = _crown_dalponte
 
-        elif name == 'dalponteCIRC_numba':
+        elif name == 'dalponteCIRC':
             from ._crown_dalponteCIRC_numba import _crown_dalponteCIRC
             self._algorithm_name = name
             self._algorithm = _crown_dalponteCIRC
 
         elif name == 'dalponte_cython':
-            raise NotImplementedError('Cython not yet supported')
+            try:
+                import pyximport; pyximport.install(
+                    setup_args={'include_dirs': np.get_include()})
+            except ImportError:
+                raise RuntimeError('pyximport must be installed to use cython')
 
+            from ._crown_dalponte_cython import _crown_dalponte
+            self._algorithm = _crown_dalponte
+            self._algorithm_name = name
+            logging.warning('Cython version may be slow!')
         else:
             raise NotImplementedError('No support for {}'.format(name))
+
+    def post_process(self, predicted_segments):
+        """Removes small holes
+
+        Args:
+            predicted_segments (array): 2D array of predicted segmentation
+        """
+        x = predicted_segments.copy().astype(float)
+        kernel = [[0,1,1,0],
+                  [1,1,1,1],
+                  [1,1,1,1],
+                  [0,1,1,0]]
+        # kernel=None
+        tree_mask = binary_closing(x)#,
+                                   #footprint=kernel)
+        interp_mask = x.copy()
+        interp_mask[x==0] = np.nan
+        interp = self._interpolate_na(interp_mask, self._fill_limit)
+        return interp
 
     def predict(self, canopy_height_model, crown_centres):
         """Predict the canopy delineation for a canopy and list of centres
         """
+        # Crown centres are output in row-col and must be in col-row
+        crown_centres = np.array(crown_centres[[1,0], :], dtype=np.int32)
         crowns = self._algorithm(np.array(canopy_height_model, dtype=np.float32),
-                                 np.array(crown_centres, dtype=np.int32),
-                                 np.float(self.th_seed),
-                                 np.float(self.th_crown),
-                                 np.float(self.th_tree),
-                                 np.float(self.max_crown))
-        return np.array(crowns, np.int32)
+                                 crown_centres,
+                                 self.th_seed,
+                                 self.th_crown,
+                                 self.th_tree,
+                                 self._max_crown)
+        out = np.array(crowns, np.int32)
 
-# def crown_delineation():
-#     """ Function calling external crown delineation algorithms
-#
-#     Parameters
-#     ----------
-#     algorithm :  str
-#                  crown delineation algorithm to be used, choose from:
-#                  ['dalponte_cython', 'dalponte_numba',
-#                   'dalponteCIRC_numba', 'watershed_skimage']
-#     loc :        str, optional
-#                  tree seed position: `top` or `top_cor`
-#     th_seed :    float
-#                  factor 1 for minimum height of tree crown
-#     th_crown :   float
-#                  factor 2 for minimum height of tree crown
-#     th_tree :    float
-#                  minimum height of tree seed (in m)
-#     max_crown :  float
-#                  maximum radius of tree crown (in m)
-#
-#     Returns
-#     -------
-#     ndarray
-#         raster of individual tree crowns
-#     """
-#     timeit = 'Tree crowns delineation: {:.3f}s'
-#
-#     # get the tree seeds (starting points for crown delineation)
-#     seeds = self._tree_colrow(loc, self.resolution)
-#     inraster = kwargs.get('inraster')
-#
-#     if not isinstance(inraster, np.ndarray):
-#         inraster = self.chm
-#     else:
-#         inraster = inraster
-#
-#     if kwargs.get('max_crown'):
-#         max_crown = kwargs['max_crown'] / self.resolution
-#
-#     if algorithm == 'dalponte_cython':
-#         tt = time.time()
-#         crowns = _crown_dalponte_cython._crown_dalponte(
-#             inraster, seeds,
-#             th_seed=float(kwargs['th_seed']),
-#             th_crown=float(kwargs['th_crown']),
-#             th_tree=float(kwargs['th_tree']),
-#             max_crown=float(max_crown)
-#         )
-#         print(timeit.format(time.time() - tt))
-#
-#     elif algorithm == 'dalponte_numba':
-#         tt = time.time()
-#         crowns = _crown_dalponte_numba._crown_dalponte(
-#             inraster, seeds,
-#             th_seed=float(kwargs['th_seed']),
-#             th_crown=float(kwargs['th_crown']),
-#             th_tree=float(kwargs['th_tree']),
-#             max_crown=float(max_crown)
-#         )
-#         print(timeit.format(time.time() - tt))
-#
-#     elif algorithm == 'dalponteCIRC_numba':
-#         tt = time.time()
-#         crowns = _crown_dalponteCIRC_numba._crown_dalponteCIRC(
-#             inraster, seeds,
-#             th_seed=float(kwargs['th_seed']),
-#             th_crown=float(kwargs['th_crown']),
-#             th_tree=float(kwargs['th_tree']),
-#             max_crown=float(max_crown)
-#         )
-#         print(timeit.format(time.time() - tt))
-#
-#     elif algorithm == 'watershed_skimage':
-#         tt = time.time()
-#         crowns = self._watershed(
-#             inraster, th_tree=float(kwargs['th_tree'])
-#         )
-#         print(timeit.format(time.time() - tt))
-#
-#     self.crowns = np.array(crowns, dtype=np.int32)
+        if self._post_process:
+            out = self.post_process(out)
+
+        return out
+
+    def _interpolate_na(self, x, limit):
+        # expects a 2xn array
+        ar = xarray.DataArray(x)
+        dims = ar.dims
+        if len(dims) != 2:
+            raise ValueError('2D array expected')
+        ar = ar.interpolate_na(dim=dims[0],
+                               method='nearest',
+                               limit=limit).interpolate_na(
+                                   dim=dims[1],
+                                   method='nearest',
+                                   limit=limit)
+        return ar.values
